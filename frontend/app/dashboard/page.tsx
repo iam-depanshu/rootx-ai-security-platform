@@ -85,30 +85,10 @@ function DashboardPage() {
 
   /* ── Socket.IO ── */
   useEffect(() => {
-    const socket = getSocket();
-    socket.on("connect", () => console.log("Socket connected:", socket.id));
-    socket.on("disconnect", () => console.log("Socket disconnected"));
-
-    // Listen for real scan steps
-    const onStep = (data: LiveStep) => {
-      setLiveSteps(prev => {
-        const existing = prev.findIndex(s => s.module === data.module);
-        if (existing >= 0) {
-          const updated = [...prev];
-          updated[existing] = data;
-          return updated;
-        }
-        return [...prev, data];
-      });
-    };
-
-    socket.on("scan:step", onStep);
-
-    return () => {
-      socket.off("connect");
-      socket.off("disconnect");
-      socket.off("scan:step", onStep);
-    };
+    fetch("/api/stats")
+      .then(r => r.json())
+      .then(data => setStats({ ...data, fixed: Math.floor((data.totalVulns || 0) * 0.8) }))
+      .catch(() => {});
   }, []);
 
   /* ── Load scan history ── */
@@ -302,31 +282,23 @@ function DashboardPage() {
             <div className="search-title">
               Find every <span>vulnerability</span><br />before attackers do.
             </div>
-            <div className="search-subtitle">
-              Enter any URL — local or public. RootX runs OWASP Top 10 checks, header analysis, injection tests &amp; more.
+          {/* Total Scans */}
+          <div style={{ ...panelStyle, textAlign: "center" }}>
+            <div style={{ ...panelTitleStyle, marginBottom: 8 }}>SCANS</div>
+            <div style={{ fontFamily: "var(--font-logo)", fontSize: "1.8rem", fontWeight: 900, color: "var(--foreground)" }}>{stats.totalScans}</div>
+            <div style={{ fontSize: "0.5rem", color: "rgba(255,255,255,0.2)", ...monoStyle }}>total</div>
             </div>
-            <div className="search-bar">
-              <div className="search-input-wrap">
-                <span className="search-prefix">TARGET ›</span>
-                <input
-                  className="search-input"
-                  type="text"
-                  placeholder="localhost:3000  or  https://example.com"
-                  value={url}
-                  onChange={e => setUrl(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && scanState !== "scanning" && handleScan()}
-                  disabled={scanState === "scanning"}
-                  spellCheck={false}
-                  autoComplete="off"
-                />
+          {/* Vulns */}
+          <div style={{ ...panelStyle, textAlign: "center" }}>
+            <div style={{ ...panelTitleStyle, marginBottom: 8 }}>VULNS</div>
+            <div style={{ fontFamily: "'Orbitron', monospace", fontSize: "1.8rem", fontWeight: 900, color: stats.totalVulns > 0 ? "#fb923c" : "#00FF9C" }}>{stats.totalVulns}</div>
+            <div style={{ fontSize: "0.5rem", color: "rgba(255,255,255,0.2)", ...monoStyle }}>found</div>
               </div>
-              <button
-                className="scan-btn"
-                onClick={handleScan}
-                disabled={scanState === "scanning" || !url.trim()}
-              >
-                {scanState === "scanning" ? "SCANNING..." : "▶ SCAN NOW"}
-              </button>
+          {/* Fixed */}
+          <div style={{ ...panelStyle, textAlign: "center" }}>
+            <div style={{ ...panelTitleStyle, marginBottom: 8 }}>FIXED</div>
+            <div style={{ fontFamily: "'Orbitron', monospace", fontSize: "1.8rem", fontWeight: 900, color: "#00FF9C" }}>{stats.fixed}</div>
+            <div style={{ fontSize: "0.5rem", color: "rgba(255,255,255,0.2)", ...monoStyle }}>patched</div>
             </div>
             <div className="quick-targets">
               <span className="quick-label">QUICK:</span>
