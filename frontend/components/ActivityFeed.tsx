@@ -33,90 +33,84 @@ const severityStyles = {
   },
 };
 
+const seedPool: ThreatEvent[] = [
+  {
+    id: "seed-1",
+    type: "SQLi",
+    severity: "CRITICAL",
+    title: "SQL Injection Attempt",
+    source: "185.220.101.4",
+    target: "/login",
+    timestamp: "2026-06-21T22:00:00.000Z",
+    detail: "' OR 1=1 -- payload detected in authentication request",
+  },
+  {
+    id: "seed-2",
+    type: "XSS",
+    severity: "HIGH",
+    title: "Cross Site Scripting",
+    source: "45.83.64.12",
+    target: "/search",
+    timestamp: "2026-06-21T21:59:00.000Z",
+    detail: "<script>alert(1)</script> reflected payload identified",
+  },
+];
+
 export default function ActivityFeed() {
-  const [events, setEvents] = useState<ThreatEvent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [events, setEvents] = useState<ThreatEvent[]>(seedPool);
+
   const [filter, setFilter] = useState("ALL");
 
   useEffect(() => {
-    const generateEvent = (): ThreatEvent => {
-      const attackPool: ThreatEvent[] = [
-        {
-          id: crypto.randomUUID(),
-          type: "SQLi",
-          severity: "CRITICAL",
-          title: "SQL Injection Attempt",
-          source: "185.220.101.4",
-          target: "/login",
-          timestamp: new Date().toISOString(),
-          detail:
-            "' OR 1=1 -- payload detected in authentication request",
-        },
-        {
-          id: crypto.randomUUID(),
-          type: "XSS",
-          severity: "HIGH",
-          title: "Cross Site Scripting",
-          source: "45.83.64.12",
-          target: "/search",
-          timestamp: new Date().toISOString(),
-          detail:
-            "<script>alert(1)</script> reflected payload identified",
-        },
-        {
-          id: crypto.randomUUID(),
-          type: "MITM",
-          severity: "CRITICAL",
-          title: "MITM Traffic Interception",
-          source: "192.168.1.14",
-          target: "Gateway Router",
-          timestamp: new Date().toISOString(),
-          detail:
-            "ARP spoofing pattern detected during packet routing",
-        },
-        {
-          id: crypto.randomUUID(),
-          type: "PORT",
-          severity: "MEDIUM",
-          title: "Exposed Admin Panel",
-          source: "91.210.45.77",
-          target: "/admin",
-          timestamp: new Date().toISOString(),
-          detail:
-            "Administrative endpoint publicly reachable",
-        },
-        {
-          id: crypto.randomUUID(),
-          type: "AUTH",
-          severity: "HIGH",
-          title: "Credential Brute Force",
-          source: "103.44.21.9",
-          target: "/auth",
-          timestamp: new Date().toISOString(),
-          detail:
-            "Multiple failed authentication attempts detected",
-        },
-      ];
+    let active = true;
 
-      return attackPool[
-        Math.floor(Math.random() * attackPool.length)
-      ];
+    const fetchNextEvent = async () => {
+      try {
+        const res = await fetch("/api/monitor");
+        if (!res.ok) throw new Error("Failed to fetch");
+        const data = await res.json();
+        if (data && data.success && data.attack) {
+          const a = data.attack;
+          // Map short types
+          let mappedType: "SQLi" | "XSS" | "MITM" | "PORT" | "AUTH" = "SQLi";
+          const lowerType = a.type.toLowerCase();
+          if (lowerType.includes("sql")) mappedType = "SQLi";
+          else if (lowerType.includes("xss") || lowerType.includes("script")) mappedType = "XSS";
+          else if (lowerType.includes("mitm") || lowerType.includes("spoof")) mappedType = "MITM";
+          else if (lowerType.includes("port") || lowerType.includes("panel") || lowerType.includes("admin")) mappedType = "PORT";
+          else if (lowerType.includes("auth") || lowerType.includes("brute") || lowerType.includes("credential")) mappedType = "AUTH";
+
+          const nextEvent: ThreatEvent = {
+            id: crypto.randomUUID(),
+            type: mappedType,
+            severity: (a.severity || "MEDIUM").toUpperCase() as "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
+            title: a.type,
+            source: a.ip || "Unknown IP",
+            target: a.path || "/",
+            timestamp: data.timestamp || new Date().toISOString(),
+            detail: a.payload || "Suspicious threat traffic detected",
+          };
+
+          if (active) {
+            setEvents((prev) => {
+              // Avoid exact duplicate payloads at the top
+              if (prev.length > 0 && prev[0].detail === nextEvent.detail && prev[0].source === nextEvent.source) {
+                return prev;
+              }
+              return [nextEvent, ...prev.slice(0, 7)];
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching telemetry event:", err);
+      }
     };
 
-    const bootEvents = Array.from({ length: 5 }, () =>
-      generateEvent()
-    );
-
-    setEvents(bootEvents);
-    setLoading(false);
-
-    const interval = setInterval(() => {
-      const next = generateEvent();
-
-      setEvents((prev) => [next, ...prev.slice(0, 7)]);
-    }, 5000);
-
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchNextEvent, 4000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, []);
 
   const filtered = useMemo(() => {
@@ -167,9 +161,7 @@ export default function ActivityFeed() {
         <AnimatePresence>
           {filtered.length === 0 ? (
             <div className="af-empty">
-              {loading
-                ? "◎ Loading telemetry..."
-                : "No matching threat events"}
+              No matching threat events
             </div>
           ) : (
             filtered.map((item, index) => {

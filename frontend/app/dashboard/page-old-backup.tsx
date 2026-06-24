@@ -1,10 +1,10 @@
+/* eslint-disable */
 "use client";
 
 import { useEffect, useState, useRef, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "@/lib/supabase";
-import Sidebar from '@/components/Sidebar';
 import { getSocket } from "@/lib/socket";
 
 /* ─── TYPES ─── */
@@ -84,41 +84,36 @@ function DashboardPage() {
   const [activeTab, setActiveTab] = useState<"results" | "history">("results");
   const autoStarted               = useRef(false);
 
-  /* ── Styles for stats panels ── */
-  const panelStyle = {
-    background: "rgba(255,255,255,0.02)",
-    border: "1px solid rgba(255,255,255,0.06)",
-    borderRadius: "8px",
-    padding: "16px 20px",
-    flex: 1,
-    minWidth: 120,
-  };
-  const panelTitleStyle = {
-    fontFamily: "'Courier New', monospace",
-    fontSize: "0.55rem",
-    letterSpacing: "0.15em",
-    color: "rgba(255,255,255,0.25)",
-    textTransform: "uppercase",
-  };
-  const monoStyle = { fontFamily: "'Courier New', monospace" };
-
-  /* ── Compute stats ── */
-  const stats = {
-    totalScans: history.length + (result ? 1 : 0),
-    totalVulns: history.reduce((a, h) => a + (h.vulnerabilities?.length || 0), 0) + (result?.vulnerabilities?.length || 0),
-    fixed: Math.floor((history.reduce((a, h) => a + (h.vulnerabilities?.length || 0), 0) + (result?.vulnerabilities?.length || 0)) * 0.7),
-  };
-
   /* ── Socket.IO ── */
   useEffect(() => {
-    fetch("/api/stats")
-      .then(r => r.json())
-      .catch(() => {});
+    const socket = getSocket();
+    socket.on("connect", () => console.log("Socket connected:", socket.id));
+    socket.on("disconnect", () => console.log("Socket disconnected"));
+
+    // Listen for real scan steps
+    const onStep = (data: LiveStep) => {
+      setLiveSteps(prev => {
+        const existing = prev.findIndex(s => s.module === data.module);
+        if (existing >= 0) {
+          const updated = [...prev];
+          updated[existing] = data;
+          return updated;
+        }
+        return [...prev, data];
+      });
+    };
+
+    socket.on("scan:step", onStep);
+
+    return () => {
+      socket.off("connect");
+      socket.off("disconnect");
+      socket.off("scan:step", onStep);
+    };
   }, []);
 
   /* ── Load scan history ── */
   const loadHistory = useCallback(async () => {
-    if (!supabase) return;
     const { data } = await supabase
       .from("scans")
       .select("id, target, score, status, vulnerabilities, created_at")
@@ -127,15 +122,10 @@ function DashboardPage() {
     if (data) setHistory(data as HistoryItem[]);
   }, []);
 
-  useEffect(() => {
-    setTimeout(() => {
-      loadHistory();
-    }, 0);
-  }, [loadHistory]);
+  useEffect(() => { loadHistory(); }, [loadHistory]);
 
   /* ── Real-time subscription ── */
   useEffect(() => {
-    if (!supabase) return;
     const ch = supabase.channel("dashboard-scans")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "scans" }, () => {
         loadHistory();
@@ -155,23 +145,6 @@ function DashboardPage() {
     setFilter("ALL");
     setExpanded(null);
     setLiveSteps([]);
-
-    const socket = getSocket();
-
-    const onStep = (data: { module: string; label: string; status: string }) => {
-      setLiveSteps(prev => {
-        const idx = prev.findIndex(s => s.module === data.module);
-        if (idx >= 0) {
-          const next = [...prev];
-          next[idx] = { module: data.module, label: data.label, status: data.status };
-          return next;
-        }
-        return [...prev, { module: data.module, label: data.label, status: data.status }];
-      });
-    };
-
-    socket.on("scan:step", onStep);
-
     try {
       const res = await fetch("/api/scan", {
         method: "POST",
@@ -187,8 +160,6 @@ function DashboardPage() {
     } catch (err) {
       setError(String(err));
       setScanState("error");
-    } finally {
-      socket.off("scan:step", onStep);
     }
   }, [url, loadHistory]);
 
@@ -315,59 +286,49 @@ function DashboardPage() {
       `}</style>
 
       <div className="dash">
-        <Sidebar />
         {/* ── Top bar ── */}
-        <div className="topbar" style={{ marginLeft: 220 }}>
+        <div className="topbar">
           <div className="logo">
             <div className="logo-dot" />
             ROOTX
-        </div>
+          </div>
           <div className="topbar-right">AUTONOMOUS PENETRATION TESTING PLATFORM</div>
         </div>
 
-        <div className="main" style={{ marginLeft: 220 }}>
+        <div className="main">
 
           {/* SEARCH SECTION */}
           <div className="search-section">
             <div className="search-label">◈ TARGET ACQUISITION</div>
             <div className="search-title">
               Find every <span>vulnerability</span><br />before attackers do.
-          </div>
-          <div className="search-subtitle">Enter a target URL below to begin autonomous penetration testing</div>
-          <div style={{display:'flex',gap:12,marginBottom:24}}>
-            <input
-              type="text"
-              placeholder="Enter target URL (e.g. https://example.com)"
-              value={url}
-              onChange={e => setUrl(e.target.value)}
-              style={{flex:1,padding:'14px 20px',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,215,0,0.15)',borderRadius:12,color:'#fff',fontSize:16,outline:'none'}}
-            />
-            <button
-              onClick={handleScan}
-              disabled={scanState==='scanning'}
-              style={{padding:'14px 32px',background:'linear-gradient(135deg,#FFD700,#FFA500)',border:'none',borderRadius:12,color:'#000',fontWeight:700,fontSize:16,cursor:'pointer',opacity:scanState==='scanning'?0.5:1}}
-            >
-              {scanState==='scanning'?'Scanning...':'Start Scan'}
-            </button>
-          </div>
-          {/* Total Scans */}
-          <div style={{ ...panelStyle, textAlign: "center" }}>
-            <div style={{ ...panelTitleStyle, marginBottom: 8 }}>SCANS</div>
-            <div style={{ fontFamily: "var(--font-logo)", fontSize: "1.8rem", fontWeight: 900, color: "var(--foreground)" }}>{stats.totalScans}</div>
-            <div style={{ fontSize: "0.5rem", color: "rgba(255,255,255,0.2)", ...monoStyle }}>total</div>
-          </div>
-          {/* Vulns */}
-          <div style={{ ...panelStyle, textAlign: "center" }}>
-            <div style={{ ...panelTitleStyle, marginBottom: 8 }}>VULNS</div>
-            <div style={{ fontFamily: "'Orbitron', monospace", fontSize: "1.8rem", fontWeight: 900, color: stats.totalVulns > 0 ? "#fb923c" : "#00FF9C" }}>{stats.totalVulns}</div>
-            <div style={{ fontSize: "0.5rem", color: "rgba(255,255,255,0.2)", ...monoStyle }}>found</div>
-          </div>
-          {/* Fixed */}
-          <div style={{ ...panelStyle, textAlign: "center" }}>
-            <div style={{ ...panelTitleStyle, marginBottom: 8 }}>FIXED</div>
-            <div style={{ fontFamily: "'Orbitron', monospace", fontSize: "1.8rem", fontWeight: 900, color: "#00FF9C" }}>{stats.fixed}</div>
-            <div style={{ fontSize: "0.5rem", color: "rgba(255,255,255,0.2)", ...monoStyle }}>patched</div>
-          </div>
+            </div>
+            <div className="search-subtitle">
+              Enter any URL — local or public. RootX runs OWASP Top 10 checks, header analysis, injection tests &amp; more.
+            </div>
+            <div className="search-bar">
+              <div className="search-input-wrap">
+                <span className="search-prefix">TARGET ›</span>
+                <input
+                  className="search-input"
+                  type="text"
+                  placeholder="localhost:3000  or  https://example.com"
+                  value={url}
+                  onChange={e => setUrl(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && scanState !== "scanning" && handleScan()}
+                  disabled={scanState === "scanning"}
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+              </div>
+              <button
+                className="scan-btn"
+                onClick={handleScan}
+                disabled={scanState === "scanning" || !url.trim()}
+              >
+                {scanState === "scanning" ? "SCANNING..." : "▶ SCAN NOW"}
+              </button>
+            </div>
             <div className="quick-targets">
               <span className="quick-label">QUICK:</span>
               {["localhost:3000", "localhost:3001", "http://localhost:3000"].map(t => (
@@ -375,8 +336,8 @@ function DashboardPage() {
                   {t}
                 </button>
               ))}
+            </div>
           </div>
-        </div>
 
           {/* SCANNING ANIMATION */}
           <AnimatePresence>
@@ -384,17 +345,17 @@ function DashboardPage() {
               <motion.div className="scanning-box" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
                 <div className="scanning-header">
                   <div className="scan-spinner" />
-              <div>
+                  <div>
                     <div className="scanning-title">ACTIVE SCAN IN PROGRESS</div>
                     <div className="scanning-target">Target: {url.startsWith("http") ? url : `http://${url}`}</div>
-                </div>
+                  </div>
                 </div>
                 <div className="step-list">
                   {liveSteps.length === 0 ? (
                     <div className="step-item step-active">
                       <span className="step-icon-active">▶</span>
                       Connecting to scan engine...
-              </div>
+                    </div>
                   ) : (
                     liveSteps.map((step, i) => {
                       const state = step.status === 'done' ? 'done' : step.status === 'running' ? 'active' : 'pending';
@@ -404,7 +365,7 @@ function DashboardPage() {
                             {state === "done" ? "✓" : state === "active" ? "▶" : "○"}
                           </span>
                           {step.label}
-                </div>
+                        </div>
                       );
                     })
                   )}
@@ -432,7 +393,7 @@ function DashboardPage() {
               <button className={`tab-btn ${activeTab === "history" ? "active" : ""}`} onClick={() => setActiveTab("history")}>
                 ▸ SCAN HISTORY {history.length > 0 && `(${history.length})`}
               </button>
-          </div>
+            </div>
           )}
 
           {/* RESULTS TAB */}
@@ -473,10 +434,10 @@ function DashboardPage() {
                     <div key={s.label} className="stat-box">
                       <span className="stat-val" style={{ color: s.color }}>{s.val}</span>
                       <span className="stat-lbl">{s.label}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-        </div>
+              </div>
 
               <div className="filter-row">
                 {["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"].map(f => (
@@ -484,7 +445,7 @@ function DashboardPage() {
                     {f} {f !== "ALL" && `(${counts[f as keyof typeof counts] ?? 0})`}
                   </button>
                 ))}
-          </div>
+              </div>
 
               <div className="vuln-list">
                 {filtered.length === 0 ? (
@@ -505,12 +466,12 @@ function DashboardPage() {
                       >
                         <div className="vuln-header">
                           <span className="vuln-icon" style={{ color: sev.color }}>{sev.icon}</span>
-                  <div>
+                          <div>
                             <span className="vuln-badge" style={{ color: sev.color, borderColor: sev.border }}>{v.severity}</span>
                             <div className="vuln-name">{v.name}</div>
-                  </div>
+                          </div>
                           <span className="vuln-toggle">{isOpen ? "▲" : "▼"}</span>
-                  </div>
+                        </div>
                         <AnimatePresence>
                           {isOpen && (
                             <motion.div
@@ -527,7 +488,7 @@ function DashboardPage() {
                                 <div className="vuln-meta">
                                   {v.cve && <span className="vuln-cve">{v.cve}</span>}
                                   {v.proof && <span className="vuln-proof">PROOF: {v.proof}</span>}
-                </div>
+                                </div>
                               )}
                             </motion.div>
                           )}
@@ -536,7 +497,7 @@ function DashboardPage() {
                     );
                   })
                 )}
-            </div>
+              </div>
             </motion.div>
           )}
 
@@ -583,9 +544,9 @@ function DashboardPage() {
                           <div style={{ fontSize: "0.6rem", color: "rgba(255,255,255,0.2)", marginTop: 3 }}>
                             {timeAgo(h.created_at)} · {hVulns.length} vulns
                             {critical > 0 && <span style={{ color: "#f87171", marginLeft: 6 }}>☠ {critical} critical</span>}
-          </div>
-        </div>
-                  <span style={{
+                          </div>
+                        </div>
+                        <span style={{
                           fontSize: "0.6rem", padding: "3px 8px", borderRadius: 3,
                           border: `1px solid ${scoreColor(h.score)}40`,
                           color: scoreColor(h.score),
@@ -596,7 +557,7 @@ function DashboardPage() {
                     );
                   })}
                 </div>
-            )}
+              )}
             </motion.div>
           )}
 

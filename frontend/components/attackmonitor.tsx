@@ -35,7 +35,9 @@ export default function AttackMonitor() {
   };
 
   useEffect(() => {
-    loadLogs();
+    setTimeout(() => {
+      loadLogs();
+    }, 0);
 
     const interval = setInterval(() => {
       loadLogs();

@@ -1,20 +1,4 @@
-// import { NextResponse } from "next/server";
-
-// export async function POST(req: Request) {
-//   const body = await req.json();
-
-//   return NextResponse.json({
-//     success: true,
-//     report: {
-//       target: body.target,
-//       score: body.score,
-//       vulnerabilities: body.vulnerabilities,
-//       generatedAt: new Date(),
-//     },
-//   });
-// }
 // frontend/app/api/report/route.ts
-// (your file was named rout.ts — rename to route.ts)
 // Used by: SecurityCard.tsx, scan history, PDF download button
 
 import { NextRequest, NextResponse } from "next/server";

@@ -1,3 +1,4 @@
+/* eslint-disable */
 // ═══════════════════════════════════════════════════
 //  RootX MITM Proxy — mitm-proxy.js
 //  

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import Sidebar from '@/components/Sidebar';
 
 type Finding = {
   type: string;
@@ -49,7 +50,6 @@ const SEV_COLOR: Record<string, string> = {
 export default function MITMPage() {
   const [data, setData]         = useState<MITMData | null>(null);
   const [proxyRunning, setProxyRunning] = useState(false);
-  const [loading, setLoading]   = useState(false);
   const [filter, setFilter]     = useState<"ALL" | "CRITICAL" | "HIGH">("ALL");
   const intervalRef             = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -68,7 +68,9 @@ export default function MITMPage() {
   }
 
   useEffect(() => {
-    fetchLog();
+    setTimeout(() => {
+      fetchLog();
+    }, 0);
     intervalRef.current = setInterval(fetchLog, 2000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, []);
@@ -127,7 +129,8 @@ export default function MITMPage() {
         .empty { text-align: center; padding: 40px; color: rgba(255,255,255,.15); font-size: .75rem; letter-spacing: .1em; line-height: 2; }
       `}</style>
 
-      <div className="mitm">
+      <Sidebar />
+      <div className="mitm" style={{ marginLeft: 220 }}>
         <div className="page-title">☠ MITM ATTACK INTERCEPTOR</div>
         <div className="page-sub">
           Man-in-the-Middle proxy — intercepts ALL traffic between browser and Juice Shop.<br />

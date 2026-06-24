@@ -1,20 +1,20 @@
-// import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-// export async function GET() {
-//   return NextResponse.json({
-//     success: true,
-//     scan: {
-//       target: "localhost",
-//       vulnerabilities: [
-//         "SQL Injection",
-//         "XSS",
-//         "Open Port 22",
-//       ],
-//       risk: "High",
-//       timestamp: new Date(),
-//     },
-//   });
-// }
+export async function GET() {
+  return NextResponse.json({
+    success: true,
+    scan: {
+      target: "localhost",
+      vulnerabilities: [
+        "SQL Injection",
+        "XSS",
+        "Open Port 22",
+      ],
+      risk: "High",
+      timestamp: new Date(),
+    },
+  });
+}
 // frontend/app/api/monitor/route.ts
 // Used by: attackmonitor.tsx
 // Handles MITM proxy control and log fetching
