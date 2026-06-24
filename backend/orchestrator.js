@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const { httpGet, calculateScore } = require("./utils");
+const { getBaseline } = require("./engines/baseline");
 
 const modules = [
   require("./modules/ssl"),
@@ -81,12 +82,32 @@ async function runScan(targetUrl, parsed, io) {
     timestamp: new Date().toISOString(),
   });
 
+  /* ── 1.5 Establish baseline for false-positive filtering ── */
+  io.emit("scan:step", {
+    scanId,
+    module: "baseline",
+    label: "Establishing false-positive baseline...",
+    status: "running",
+    timestamp: new Date().toISOString(),
+  });
+
+  const baseline = await getBaseline(targetUrl);
+
+  io.emit("scan:step", {
+    scanId,
+    module: "baseline",
+    label: "Baseline established",
+    status: "done",
+    timestamp: new Date().toISOString(),
+  });
+
   /* ── 2. Build shared context ── */
   const context = {
     headers: homeRes.headers || {},
     body: String(homeRes.data || ""),
     isHttps: parsed.protocol === "https:",
     hostname: parsed.hostname,
+    baseline,
   };
 
   const allVulns = [];

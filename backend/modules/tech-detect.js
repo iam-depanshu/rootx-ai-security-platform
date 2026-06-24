@@ -15,13 +15,13 @@ module.exports = {
     const body = context.body || "";
 
     const techs = [];
-    const h = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), String(v)]));
+    const h = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), String(v).toLowerCase()]));
     const b = body.toLowerCase();
 
-    if (h["x-powered-by"]?.includes("PHP") || b.includes("<?php")) techs.push("PHP");
-    if (h["x-powered-by"]?.includes("Express") || h["x-powered-by"]?.includes("Node")) techs.push("Node.js");
+    if (h["x-powered-by"]?.includes("php") || b.includes("<?php")) techs.push("PHP");
+    if (h["x-powered-by"]?.includes("express") || h["x-powered-by"]?.includes("node")) techs.push("Node.js");
     if (h["server"]?.includes("nginx")) techs.push("Nginx");
-    if (h["server"]?.includes("Apache")) techs.push("Apache");
+    if (h["server"]?.includes("apache")) techs.push("Apache");
     if (b.includes("wp-content")) techs.push("WordPress");
     if (b.includes("react") || b.includes("__next")) techs.push("React/Next.js");
     if (b.includes("jquery")) techs.push("jQuery");

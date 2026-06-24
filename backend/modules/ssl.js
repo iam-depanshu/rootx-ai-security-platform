@@ -1,4 +1,5 @@
 const tls = require("tls");
+const url = require("url");
 
 module.exports = {
   name: "ssl_check",
@@ -19,7 +20,17 @@ module.exports = {
 
     if (context.isHttps) {
       sslResult = await new Promise((resolve) => {
-        const socket = tls.connect(443, context.hostname, { rejectUnauthorized: false, timeout: 5000 }, () => {
+        let parsedPort = 443;
+        try {
+          const parsed = new url.URL(targetUrl);
+          if (parsed.port) {
+            parsedPort = parseInt(parsed.port);
+          }
+        } catch (e) {
+          // Fall back to default HTTPS port
+        }
+
+        const socket = tls.connect(parsedPort, context.hostname, { rejectUnauthorized: false, timeout: 5000 }, () => {
           const cert = socket.getPeerCertificate();
           const proto = socket.getProtocol();
           socket.end();
@@ -27,8 +38,8 @@ module.exports = {
           const daysLeft = expiry ? Math.floor((expiry - Date.now()) / 86400000) : 0;
           let grade = "A";
           if (!proto || proto === "TLSv1" || proto === "TLSv1.1") grade = "C";
-          else if (daysLeft < 30) grade = "B";
           else if (daysLeft < 0) grade = "F";
+          else if (daysLeft < 30) grade = "B";
           resolve({ grade, status: daysLeft > 0 ? "VALID" : "EXPIRED", daysLeft, protocol: proto });
         });
         socket.on("error", () => resolve({ grade: "F", status: "NO SSL", daysLeft: 0, protocol: "NONE" }));

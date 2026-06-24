@@ -6,6 +6,9 @@ require("dotenv").config();
 
 const { parseTarget } = require("./utils");
 const { runScan } = require("./orchestrator");
+const { processMessage } = require("./engines/agent");
+const { firewall, registerShieldRoutes } = require("./middleware/firewall");
+const { isValidTarget, sanitizeChatMessage } = require("./utils/sanitize");
 
 const app = express();
 const server = http.createServer(app);
@@ -13,9 +16,11 @@ const server = http.createServer(app);
 /* ─── SUPABASE (optional - won't crash if missing) ─── */
 let supabase = null;
 try {
-  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY;
+  if (supabaseUrl && supabaseKey) {
     const { createClient } = require("@supabase/supabase-js");
-    supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+    supabase = createClient(supabaseUrl, supabaseKey);
     console.log("[ROOTX] Supabase connected");
   } else {
     console.log("[ROOTX] Supabase not configured - running without DB");
@@ -40,18 +45,33 @@ const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] },
 });
 
+// Attach socket.io instance to app locals for the firewall middleware to use
+app.locals.io = io;
+
 app.use(cors());
 app.use(express.json());
 
+// Apply Firewall middleware to protect all routes
+app.use(firewall);
+
+// Register Shield/Firewall management routes
+registerShieldRoutes(app);
+
 /* ═══════════════════════════════════════════
    MAIN SCAN ENDPOINT
-═══════════════════════════════════════════ */
+   ═══════════════════════════════════════════ */
 app.post("/api/scan", async (req, res) => {
   const { target } = req.body;
   if (!target) return res.status(400).json({ error: "No target provided" });
 
   const parsed = parseTarget(target);
   if (!parsed) return res.status(400).json({ error: "Invalid URL" });
+
+  // SSRF protection — block internal/private IPs
+  const targetUrl_check = `${parsed.protocol}//${parsed.host}`;
+  if (!isValidTarget(targetUrl_check)) {
+    return res.status(400).json({ error: "Target blocked: internal/private IP addresses are not allowed" });
+  }
 
   const targetUrl = `${parsed.protocol}//${parsed.host}`;
   console.log(`[ROOTX] Scanning: ${targetUrl}`);
@@ -90,6 +110,26 @@ app.post("/api/scan", async (req, res) => {
   }
 });
 
+/* ─── AI CHAT ROUTE ─── */
+app.post("/api/chat", async (req, res) => {
+  try {
+    const { message, history } = req.body;
+    if (!message) return res.status(400).json({ error: "Message required" });
+    // Sanitize against prompt injection
+    const safeMessage = sanitizeChatMessage(message);
+    const result = await processMessage(safeMessage, history || [], { io, scanFn: async (url) => {
+      const parsed = parseTarget(url);
+      if (!parsed) throw new Error("Invalid URL to scan");
+      const targetUrl = `${parsed.protocol}//${parsed.host}`;
+      return await runScan(targetUrl, parsed, io);
+    }});
+    return res.json(result);
+  } catch (err) {
+    console.error("[ROOTX] Chat error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 /* ─── OTHER ENDPOINTS ─── */
 app.get("/api/latest-scan", async (req, res) => {
   if (!supabase) return res.json({});
@@ -101,7 +141,7 @@ app.get("/api/stats", async (req, res) => {
   if (!supabase) return res.json({ totalScans: 0, avgScore: 0, totalVulns: 0 });
   const { data: scans } = await supabase.from("scans").select("score, vulnerabilities");
   const total = scans?.length || 0;
-  const avg = total > 0 ? Math.round(scans.reduce((a, s) => a + s.score, 0) / total) : 0;
+  const avg = total > 0 ? Math.round((scans?.reduce((a, s) => a + s.score, 0) || 0) / total) : 0;
   const vulns = scans?.reduce((a, s) => a + (s.vulnerabilities?.length || 0), 0) || 0;
   return res.json({ totalScans: total, avgScore: avg, totalVulns: vulns });
 });
