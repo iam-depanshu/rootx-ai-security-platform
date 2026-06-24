@@ -4,6 +4,7 @@ const { getBaseline } = require("./engines/baseline");
 const { lookupCVEs } = require("./modules/cve-lookup");
 const { scanForSecrets } = require("./modules/secrets-scanner");
 const { recordMitreCoverage } = require("./modules/mitre-map");
+const { crawl } = require("./modules/crawler");
 const fetch = require("node-fetch");
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
@@ -30,16 +31,23 @@ async function getProactiveComment(moduleName, result) {
   }
 }
 
-const modules = [
-  require("./modules/ssl"),
+// Page-level checks run once per discovered page
+const pageLevelModules = [
   require("./modules/headers"),
   require("./modules/cookies"),
-  require("./modules/sqli"),
-  require("./modules/xss"),
   require("./modules/sensitive-files"),
   require("./modules/admin-panels"),
+];
+
+// Site-level checks run once against the main target
+const siteLevelModules = [
+  require("./modules/ssl"),
+  require("./modules/sqli"),
+  require("./modules/xss"),
   require("./modules/tech-detect"),
 ];
+
+const allModules = [...pageLevelModules, ...siteLevelModules];
 
 /**
  * Run all scan modules sequentially against a target.
@@ -53,11 +61,11 @@ async function runScan(targetUrl, parsed, io, supabase) {
   const scanId = crypto.randomUUID();
   const startTime = Date.now();
 
-  io.emit("scan:start", {
+    io.emit("scan:start", {
     scanId,
     target: targetUrl,
     timestamp: new Date().toISOString(),
-    totalModules: modules.length,
+    totalModules: allModules.length,
   });
 
   /* ── 1. Connect to target ── */
@@ -141,10 +149,84 @@ async function runScan(targetUrl, parsed, io, supabase) {
   const allVulns = [];
   let runningScore = 100;
 
-  /* ── 3. Run each module ── */
+  /* ── 2.5 Crawl the site ── */
+  io.emit("scan:step", {
+    scanId,
+    module: "crawler",
+    label: "Crawling site to discover pages...",
+    status: "running",
+    timestamp: new Date().toISOString(),
+  });
+
+  const pages = await crawl(targetUrl, 20);
+
+  io.emit("scan:step", {
+    scanId,
+    module: "crawler",
+    label: `Crawling done — ${pages.length} pages discovered`,
+    status: "done",
+    timestamp: new Date().toISOString(),
+  });
+
+  /* ── 3. Run per-page modules ── */
+  let moduleProgress = 0;
+  const totalTasks = pageLevelModules.length * pages.length + siteLevelModules.length;
   const moduleResults = {};
-  for (let i = 0; i < modules.length; i++) {
-    const mod = modules[i];
+
+  for (const page of pages) {
+    if (page.status === 0) continue;
+
+    io.emit("scan:step", {
+      scanId,
+      module: "page-scan",
+      label: `Scanning page: ${page.url}`,
+      status: "running",
+      timestamp: new Date().toISOString(),
+    });
+
+    for (const mod of pageLevelModules) {
+      try {
+        const pageContext = {
+          ...context,
+          body: page.html,
+          headers: {},
+        };
+        const result = await mod.run(page.url, pageContext, io, scanId);
+        moduleResults[`${mod.name}-${page.url}`] = result;
+
+        // Tag all findings with the page URL they were found on
+        if (result.vulns) {
+          const tagged = result.vulns.map(v => ({ ...v, foundOn: page.url }));
+          allVulns.push(...tagged);
+          runningScore = calculateScore(allVulns);
+        }
+
+        // Track tech/warnings from module results that carry them
+        if (!context.pageTech) context.pageTech = [];
+        if (result.technologies) context.pageTech.push(...result.technologies);
+        if (result.panels) context.panels = [...new Set([...(context.panels || []), ...result.panels])];
+
+        const comment = await getProactiveComment(mod.name, result);
+        if (comment) {
+          io.emit("scan:comment", { sessionId: scanId, module: mod.name, comment });
+        }
+
+        moduleProgress++;
+        io.emit("scan:progress", {
+          scanId,
+          progress: Math.round((moduleProgress / totalTasks) * 100),
+          score: runningScore,
+        });
+      } catch (err) {
+        console.error(`[ROOTX] Page module ${mod.name} error on ${page.url}:`, err.message);
+      }
+    }
+
+    if (context.pageTech) context.technologies = [...new Set([...(context.technologies || []), ...context.pageTech])];
+  }
+
+  /* ── 3.5 Run site-level modules ── */
+  for (const mod of siteLevelModules) {
     try {
       const result = await mod.run(targetUrl, context, io, scanId);
       moduleResults[mod.name] = result;
@@ -154,26 +236,36 @@ async function runScan(targetUrl, parsed, io, supabase) {
         runningScore = calculateScore(allVulns);
       }
 
-      // Proactive copilot comment
       const comment = await getProactiveComment(mod.name, result);
       if (comment) {
         io.emit("scan:comment", { sessionId: scanId, module: mod.name, comment });
       }
 
+      moduleProgress++;
       io.emit("scan:progress", {
         scanId,
-        progress: Math.round(((i + 1) / modules.length) * 100),
+        progress: Math.round((moduleProgress / totalTasks) * 100),
         score: runningScore,
       });
 
-      // Collect extra data into context for the final response
       if (result.panels) context.panels = result.panels;
       if (result.technologies) context.technologies = result.technologies;
       if (result.sslResult) context.sslResult = result.sslResult;
     } catch (err) {
-      console.error(`[ROOTX] Module ${mod.name} error:`, err.message);
+      console.error(`[ROOTX] Site module ${mod.name} error:`, err.message);
     }
   }
+
+  /* ── 3.6 Deduplicate findings ── */
+  const seen = new Set();
+  const dedupedVulns = allVulns.filter(v => {
+    const key = `${v.type || v.name}-${v.foundOn || targetUrl}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  allVulns.length = 0;
+  allVulns.push(...dedupedVulns);
 
   /* ── 3.5 CVE lookup ── */
   let cveResults = [];
@@ -185,7 +277,14 @@ async function runScan(targetUrl, parsed, io, supabase) {
   }
 
   /* ── 3.55 MITRE ATT&CK ── */
-  await recordMitreCoverage(null, moduleResults, supabase);
+  // Build a module-name-keyed map (strip per-page composite keys)
+  const mitreResults = {};
+  for (const [key, val] of Object.entries(moduleResults)) {
+    const modName = key.includes("-") ? key.split("-")[0] : key;
+    if (!mitreResults[modName]) mitreResults[modName] = { vulns: [] };
+    if (val?.vulns) mitreResults[modName].vulns.push(...val.vulns);
+  }
+  await recordMitreCoverage(null, mitreResults, supabase);
 
   /* ── 3.6 Secrets scanning ── */
   const secrets = scanForSecrets(context.body || "");
@@ -222,6 +321,7 @@ async function runScan(targetUrl, parsed, io, supabase) {
     panels: context.panels || [],
     sslResult: context.sslResult || { grade: "N/A", status: "HTTP ONLY" },
     drift,
+    pagesScanned: pages.map(p => ({ url: p.url, status: p.status })),
   };
 }
 

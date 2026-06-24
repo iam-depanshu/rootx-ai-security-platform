@@ -148,6 +148,7 @@ app.post("/api/scan", async (req, res) => {
       sslGrade: result.sslResult.grade,
       sslStatus: result.sslResult.status,
       drift: result.drift,
+      pagesScanned: result.pagesScanned,
     });
   } catch (err) {
     console.error("[ROOTX] Scan error:", err.message);

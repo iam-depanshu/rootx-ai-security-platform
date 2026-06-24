@@ -17,6 +17,7 @@ type Vuln = {
   fix: string;
   cve?: string;
   proof?: string;
+  foundOn?: string;
 };
 
 type ScanResult = {
@@ -30,6 +31,7 @@ type ScanResult = {
   sslGrade: string;
   sslStatus: string;
   drift?: { added: string[]; resolved: string[]; lastScanDate: string };
+  pagesScanned?: { url: string; status: number }[];
 };
 
 type ScanState = "idle" | "scanning" | "done" | "error";
@@ -531,6 +533,28 @@ function DashboardPage() {
             </div>
         </div>
 
+              {/* Pages scanned list */}
+              {result.pagesScanned && result.pagesScanned.length > 0 && (
+                <div style={{ marginBottom: 14, padding: "12px 16px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8 }}>
+                  <div style={{ fontSize: "0.6rem", letterSpacing: "0.12em", color: "rgba(255,255,255,0.3)", fontFamily: "'Courier New', monospace", marginBottom: 8 }}>
+                    PAGES SCANNED ({result.pagesScanned.length})
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {result.pagesScanned.map(p => (
+                      <span key={p.url} style={{
+                        fontSize: "0.62rem", padding: "4px 10px", borderRadius: 4,
+                        background: p.status === 200 ? "rgba(0,255,156,0.06)" : "rgba(248,113,113,0.06)",
+                        border: p.status === 200 ? "1px solid rgba(0,255,156,0.2)" : "1px solid rgba(248,113,113,0.2)",
+                        color: p.status === 200 ? "rgba(0,255,156,0.7)" : "rgba(248,113,113,0.7)",
+                        fontFamily: "'Courier New', monospace",
+                      }}>
+                        {(() => { try { return p.url.replace(new URL(p.url).origin, "") || "/"; } catch { return p.url; } })()} — {p.status}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Drift banner */}
               {result.drift && (
                 <div style={{ marginBottom: 14 }}>
@@ -627,6 +651,11 @@ function DashboardPage() {
                               transition={{ duration: 0.2 }}
                             >
                               <div className="vuln-detail">{v.detail}</div>
+                              {v.foundOn && (
+                                <div style={{ fontSize: "0.58rem", color: "rgba(255,255,255,0.25)", fontFamily: "'Courier New', monospace", marginBottom: 8 }}>
+                                  Found on: {v.foundOn}
+                                </div>
+                              )}
                               <div className="vuln-fix-label">▸ RECOMMENDED FIX</div>
                               <div className="vuln-fix">{v.fix}</div>
                               {(v.cve || v.proof) && (
