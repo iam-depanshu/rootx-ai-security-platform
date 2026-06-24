@@ -20,6 +20,7 @@ type Vuln = {
 };
 
 type ScanResult = {
+  id?: string;
   score: number;
   status: string;
   vulnerabilities: Vuln[];
@@ -28,6 +29,7 @@ type ScanResult = {
   discoveredPanels: string[];
   sslGrade: string;
   sslStatus: string;
+  drift?: { added: string[]; resolved: string[]; lastScanDate: string };
 };
 
 type ScanState = "idle" | "scanning" | "done" | "error";
@@ -82,6 +84,7 @@ function DashboardPage() {
   const [expanded, setExpanded]   = useState<string | null>(null);
   const [history, setHistory]     = useState<HistoryItem[]>([]);
   const [activeTab, setActiveTab] = useState<"results" | "history">("results");
+  const [mitreTechniques, setMitreTechniques] = useState<{ technique_id: string; technique_name: string; count: number }[]>([]);
   const autoStarted               = useRef(false);
 
   /* ── Styles for stats panels ── */
@@ -108,6 +111,39 @@ function DashboardPage() {
     totalVulns: history.reduce((a, h) => a + (h.vulnerabilities?.length || 0), 0) + (result?.vulnerabilities?.length || 0),
     fixed: Math.floor((history.reduce((a, h) => a + (h.vulnerabilities?.length || 0), 0) + (result?.vulnerabilities?.length || 0)) * 0.7),
   };
+
+  /* ── Tutorial state ── */
+  const [tutorialText, setTutorialText] = useState<string | null>(null);
+  const [attackPath, setAttackPath] = useState<string | null>(null);
+
+  const generateTutorial = async (scanId: string) => {
+    const res = await fetch("/api/tutorial", {
+      method: "POST",
+      body: JSON.stringify({ scanId }),
+    });
+    const { tutorial } = await res.json();
+    setTutorialText(tutorial);
+  };
+
+  const generateAttackPath = async () => {
+    if (!result?.vulnerabilities?.length) return;
+    const res = await fetch("/api/attack-path", {
+      method: "POST",
+      body: JSON.stringify({ vulnerabilities: result.vulnerabilities }),
+    });
+    const { attackPath: path } = await res.json();
+    setAttackPath(path);
+  };
+
+  /* ── Fetch MITRE coverage ── */
+  useEffect(() => {
+    const userId = localStorage.getItem("rootx_user_id");
+    if (!userId) return;
+    fetch(`/api/mitre-coverage/${userId}`)
+      .then(r => r.json())
+      .then(d => setMitreTechniques(d || []))
+      .catch(() => {});
+  }, []);
 
   /* ── Socket.IO ── */
   useEffect(() => {
@@ -376,6 +412,23 @@ function DashboardPage() {
                 </button>
               ))}
           </div>
+          {/* MITRE ATT&CK Coverage */}
+          {mitreTechniques.length > 0 && (
+            <div style={{ marginTop: 16, ...panelStyle }}>
+              <div style={{ ...panelTitleStyle, marginBottom: 8 }}>MITRE ATT&amp;CK COVERAGE</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {mitreTechniques.map(t => (
+                  <span key={t.technique_id} style={{
+                    fontSize: "0.6rem", padding: "4px 10px", borderRadius: 4,
+                    background: "rgba(0,255,156,0.06)", border: "1px solid rgba(0,255,156,0.2)",
+                    color: "#00FF9C", fontFamily: "'Courier New', monospace",
+                  }}>
+                    {t.technique_id} — {t.technique_name} ({t.count})
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
           {/* SCANNING ANIMATION */}
@@ -477,6 +530,59 @@ function DashboardPage() {
               ))}
             </div>
         </div>
+
+              {/* Drift banner */}
+              {result.drift && (
+                <div style={{ marginBottom: 14 }}>
+                  {result.drift.added?.length > 0 && (
+                    <div style={{ padding: "10px 16px", background: "rgba(251,146,60,0.08)", border: "1px solid rgba(251,146,60,0.25)", borderRadius: 6, fontSize: "0.7rem", color: "#fb923c", fontFamily: "'Courier New', monospace", marginBottom: 6 }}>
+                      New since last scan ({new Date(result.drift.lastScanDate).toLocaleDateString()}): {result.drift.added.join(", ")}
+                    </div>
+                  )}
+                  {result.drift.resolved?.length > 0 && (
+                    <div style={{ padding: "10px 16px", background: "rgba(0,255,156,0.08)", border: "1px solid rgba(0,255,156,0.25)", borderRadius: 6, fontSize: "0.7rem", color: "#00FF9C", fontFamily: "'Courier New', monospace" }}>
+                      Resolved since last scan: {result.drift.resolved.join(", ")}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Action buttons */}
+              {result.id && (
+                <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+                  <a href={`${process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000"}/api/report/${result.id}`} target="_blank" rel="noopener noreferrer">
+                    <button style={{ padding: "10px 20px", background: "rgba(0,255,156,0.08)", border: "1px solid rgba(0,255,156,0.3)", borderRadius: 6, color: "#00FF9C", cursor: "pointer", fontSize: "0.7rem", fontFamily: "'Courier New', monospace", letterSpacing: "0.08em" }}>
+                      Download Report
+                    </button>
+                  </a>
+                  <button
+                    onClick={() => generateTutorial(result.id!)}
+                    style={{ padding: "10px 20px", background: "rgba(var(--accent-rgb),0.08)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--accent)", cursor: "pointer", fontSize: "0.7rem", fontFamily: "'Courier New', monospace", letterSpacing: "0.08em" }}
+                  >
+                    Generate Tutorial
+                  </button>
+                  <button
+                    onClick={generateAttackPath}
+                    style={{ padding: "10px 20px", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.3)", borderRadius: 6, color: "#f87171", cursor: "pointer", fontSize: "0.7rem", fontFamily: "'Courier New', monospace", letterSpacing: "0.08em" }}
+                  >
+                    Attack Path
+                  </button>
+                </div>
+              )}
+              {tutorialText && (
+                <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8, padding: 20, marginBottom: 14 }}>
+                  <div style={{ fontSize: "0.6rem", letterSpacing: "0.15em", color: "var(--accent)", fontFamily: "'Courier New', monospace", marginBottom: 8 }}>TUTORIAL</div>
+                  <div style={{ fontSize: "0.73rem", lineHeight: 1.7, color: "rgba(255,255,255,0.6)", whiteSpace: "pre-wrap", fontFamily: "var(--font-sans)" }}>{tutorialText}</div>
+                  <button onClick={() => setTutorialText(null)} style={{ marginTop: 10, background: "none", border: "1px solid var(--border)", borderRadius: 4, padding: "6px 14px", color: "var(--text-muted)", cursor: "pointer", fontSize: "0.65rem" }}>Dismiss</button>
+                </div>
+              )}
+              {attackPath && (
+                <div style={{ background: "rgba(248,113,113,0.03)", border: "1px solid rgba(248,113,113,0.15)", borderRadius: 8, padding: 20, marginBottom: 14 }}>
+                  <div style={{ fontSize: "0.6rem", letterSpacing: "0.15em", color: "#f87171", fontFamily: "'Courier New', monospace", marginBottom: 8 }}>ATTACK PATH</div>
+                  <div style={{ fontSize: "0.73rem", lineHeight: 1.7, color: "rgba(255,255,255,0.6)", whiteSpace: "pre-wrap", fontFamily: "var(--font-sans)" }}>{attackPath}</div>
+                  <button onClick={() => setAttackPath(null)} style={{ marginTop: 10, background: "none", border: "1px solid var(--border)", borderRadius: 4, padding: "6px 14px", color: "var(--text-muted)", cursor: "pointer", fontSize: "0.65rem" }}>Dismiss</button>
+                </div>
+              )}
 
               <div className="filter-row">
                 {["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"].map(f => (

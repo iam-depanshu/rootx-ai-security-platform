@@ -252,8 +252,15 @@ const BUILT_IN_RESPONSES = {
  * @returns {object} { response, vulns, action }
  */
 async function processMessage(userMessage, conversationHistory = [], options = {}) {
-  const { io, scanFn } = options;
+  const { io, scanFn, skillLevel } = options;
   const lowerMsg = userMessage.toLowerCase().trim();
+
+  // Skill-adaptive system prompt adjustment
+  const levelInstruction = {
+    beginner: "Explain terms simply, avoid jargon, give step-by-step guidance.",
+    intermediate: "Be concise but explain reasoning behind suggestions.",
+    advanced: "Be terse and technical, skip basic explanations.",
+  }[skillLevel] || "";
 
   // ─── 1. Check for built-in responses ───
   if (["help", "?", "what can you do", "commands"].some(k => lowerMsg.includes(k))) {
@@ -300,8 +307,9 @@ async function processMessage(userMessage, conversationHistory = [], options = {
 
   if (apiKey) {
     try {
+      const effectiveSystemPrompt = levelInstruction ? `${SYSTEM_PROMPT}\n\n${levelInstruction}` : SYSTEM_PROMPT;
       const messages = [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: effectiveSystemPrompt },
         ...conversationHistory.slice(-10),
         { role: "user", content: userMessage },
       ];

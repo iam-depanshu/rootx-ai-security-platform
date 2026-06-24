@@ -9,10 +9,14 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
+    // Add userId from cookie/storage to enable skill-adaptive coaching
+    const userId = req.cookies.get("user-id")?.value || null;
+    const payload = userId ? { ...body, userId } : body;
+
     const res = await fetch(`${BACKEND_URL}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
     });
 
     const data = await res.json();

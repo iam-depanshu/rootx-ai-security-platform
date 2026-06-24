@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
+import ChatInputBar from "@/components/ChatInputBar";
 
 /* ─── Types ─── */
 type MessageRole = "user" | "assistant" | "system";
@@ -55,8 +56,13 @@ export default function ChatPage() {
 
   useEffect(() => { scrollToBottom(); }, [messages]);
 
-  const sendMessage = async (text?: string) => {
-    const msg = text || input.trim();
+  const sendMessage = async (msgArg?: string | { text: string; attachments?: any[] }) => {
+    let msg: string;
+    if (typeof msgArg === "object") {
+      msg = msgArg.text;
+    } else {
+      msg = msgArg || input.trim();
+    }
     if (!msg || sending) return;
     setInput('');
     setSending(true);
@@ -370,59 +376,8 @@ export default function ChatPage() {
           <div style={{
             maxWidth: 900,
             margin: '0 auto',
-            display: 'flex',
-            gap: 10,
           }}>
-            <input
-              ref={inputRef}
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask RootX anything..."
-              disabled={sending}
-              style={{
-                flex: 1,
-                background: 'var(--card-bg)',
-                border: '1px solid var(--border)',
-                borderRadius: 10,
-                padding: '14px 18px',
-                color: 'var(--foreground)',
-                fontSize: '0.85rem',
-                fontFamily: "var(--font-mono)",
-                outline: 'none',
-                transition: 'all 0.2s',
-                letterSpacing: '0.03em',
-              }}
-              onFocus={e => {
-                e.currentTarget.style.borderColor = 'var(--accent)';
-                e.currentTarget.style.boxShadow = '0 0 0 3px var(--accent-glow)';
-              }}
-              onBlur={e => {
-                e.currentTarget.style.borderColor = 'var(--border)';
-                e.currentTarget.style.boxShadow = 'none';
-              }}
-            />
-            <button
-              onClick={() => sendMessage()}
-              disabled={sending || !input.trim()}
-              style={{
-                background: 'var(--accent)',
-                color: 'var(--background)',
-                border: 'none',
-                borderRadius: 10,
-                padding: '14px 24px',
-                fontFamily: "var(--font-logo)",
-                fontSize: '0.7rem',
-                fontWeight: 700,
-                letterSpacing: '0.1em',
-                cursor: sending ? 'not-allowed' : 'pointer',
-                opacity: sending || !input.trim() ? 0.5 : 1,
-                transition: 'all 0.15s',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {sending ? '...' : 'SEND ▶'}
-            </button>
+            <ChatInputBar onSend={(data) => sendMessage(data)} disabled={sending} />
           </div>
         </div>
       </div>

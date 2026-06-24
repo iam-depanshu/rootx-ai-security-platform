@@ -1,6 +1,34 @@
 const crypto = require("crypto");
 const { httpGet, calculateScore } = require("./utils");
 const { getBaseline } = require("./engines/baseline");
+const { lookupCVEs } = require("./modules/cve-lookup");
+const { scanForSecrets } = require("./modules/secrets-scanner");
+const { recordMitreCoverage } = require("./modules/mitre-map");
+const fetch = require("node-fetch");
+
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+
+async function getProactiveComment(moduleName, result) {
+  if (!GEMINI_API_KEY || !result?.vulns?.length) return null;
+  try {
+    const prompt = `In one short sentence, comment on this finding like a helpful security copilot watching live: module=${moduleName}, findings=${JSON.stringify(result.vulns)}`;
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.3, maxOutputTokens: 100 },
+        }),
+      }
+    );
+    const data = await resp.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+  } catch {
+    return null;
+  }
+}
 
 const modules = [
   require("./modules/ssl"),
@@ -21,7 +49,7 @@ const modules = [
  * @param {Server} io         - Socket.IO server instance
  * @returns {object}          - Aggregated scan results
  */
-async function runScan(targetUrl, parsed, io) {
+async function runScan(targetUrl, parsed, io, supabase) {
   const scanId = crypto.randomUUID();
   const startTime = Date.now();
 
@@ -114,14 +142,22 @@ async function runScan(targetUrl, parsed, io) {
   let runningScore = 100;
 
   /* ── 3. Run each module ── */
+  const moduleResults = {};
   for (let i = 0; i < modules.length; i++) {
     const mod = modules[i];
     try {
       const result = await mod.run(targetUrl, context, io, scanId);
+      moduleResults[mod.name] = result;
 
       if (result.vulns) {
         allVulns.push(...result.vulns);
         runningScore = calculateScore(allVulns);
+      }
+
+      // Proactive copilot comment
+      const comment = await getProactiveComment(mod.name, result);
+      if (comment) {
+        io.emit("scan:comment", { sessionId: scanId, module: mod.name, comment });
       }
 
       io.emit("scan:progress", {
@@ -138,6 +174,31 @@ async function runScan(targetUrl, parsed, io) {
       console.error(`[ROOTX] Module ${mod.name} error:`, err.message);
     }
   }
+
+  /* ── 3.5 CVE lookup ── */
+  let cveResults = [];
+  if (context.technologies?.length) {
+    const results = await Promise.all(
+      context.technologies.map(t => lookupCVEs(t, null))
+    );
+    cveResults = context.technologies.map((t, i) => ({ tech: t, cves: results[i] }));
+  }
+
+  /* ── 3.55 MITRE ATT&CK ── */
+  await recordMitreCoverage(null, moduleResults, supabase);
+
+  /* ── 3.6 Secrets scanning ── */
+  const secrets = scanForSecrets(context.body || "");
+  if (secrets.length && supabase) {
+    for (const s of secrets) {
+      try {
+        await supabase.from("secrets_vault").insert({ scan_id: scanId, type: s.type, redacted_preview: s.redactedPreview });
+      } catch {}
+    }
+  }
+
+  /* ── 3.7 Drift tracking ── */
+  const drift = await getDriftSummary(targetUrl, allVulns, null, supabase);
 
   /* ── 4. Final results ── */
   const score = calculateScore(allVulns);
@@ -160,7 +221,33 @@ async function runScan(targetUrl, parsed, io) {
     technologies: context.technologies || [],
     panels: context.panels || [],
     sslResult: context.sslResult || { grade: "N/A", status: "HTTP ONLY" },
+    drift,
   };
 }
 
-module.exports = { runScan };
+async function getDriftSummary(target, newVulns, userId, supabase) {
+  if (!supabase) return null;
+  try {
+    const { data: lastScan } = await supabase
+      .from("scans")
+      .select("vulnerabilities, created_at")
+      .eq("target", target)
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!lastScan) return null;
+
+    const oldTypes = new Set((lastScan.vulnerabilities || []).map(v => v.type || v.name));
+    const newTypes = new Set(newVulns.map(v => v.type || v.name));
+    const added = [...newTypes].filter(t => !oldTypes.has(t));
+    const resolved = [...oldTypes].filter(t => !newTypes.has(t));
+
+    return { added, resolved, lastScanDate: lastScan.created_at };
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { runScan, getDriftSummary };

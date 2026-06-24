@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 
 export default function SettingsPage() {
@@ -9,6 +9,36 @@ export default function SettingsPage() {
   const [llmUrl, setLlmUrl] = useState('https://generativelanguage.googleapis.com/v1beta');
   const [llmModel, setLlmModel] = useState('gemini-2.0-flash');
   const [saved, setSaved] = useState(false);
+
+  /* ── Allowed domains for ethical guardrails ── */
+  const [allowedDomains, setAllowedDomains] = useState<{ id: string; domain: string }[]>([]);
+  const [newDomain, setNewDomain] = useState("");
+  const userId = typeof window !== "undefined" ? localStorage.getItem("rootx_user_id") || "" : "";
+
+  useEffect(() => {
+    if (!userId) return;
+    fetch(`/api/allowlist?userId=${userId}`)
+      .then(r => r.json())
+      .then(d => setAllowedDomains(d || []))
+      .catch(() => {});
+  }, [userId]);
+
+  const addDomain = async () => {
+    if (!newDomain.trim() || !userId) return;
+    await fetch("/api/allowlist", {
+      method: "POST",
+      body: JSON.stringify({ domain: newDomain.trim(), userId }),
+    });
+    setNewDomain("");
+    const res = await fetch(`/api/allowlist?userId=${userId}`);
+    const data = await res.json();
+    setAllowedDomains(data || []);
+  };
+
+  const removeDomain = async (id: string) => {
+    await fetch("/api/allowlist", { method: "DELETE", body: JSON.stringify({ id }) });
+    setAllowedDomains(prev => prev.filter(d => d.id !== id));
+  };
 
   const handleSave = () => {
     // In production, these would be saved to Supabase or backend
@@ -138,6 +168,61 @@ export default function SettingsPage() {
               Required for auto-fix Pull Requests. Needs &apos;repo&apos; scope.
             </div>
           </div>
+        </div>
+
+        {/* Allowed Domains Section */}
+        <div style={{
+          background: 'var(--card-bg)',
+          border: '1px solid var(--border)',
+          borderRadius: 10, padding: '22px 24px', marginBottom: 16,
+        }}>
+          <div style={{
+            fontFamily: "var(--font-logo)", fontSize: '0.6rem',
+            color: 'var(--text-muted)', letterSpacing: '0.15em',
+            marginBottom: 18,
+          }}>ALLOWED SCAN DOMAINS</div>
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 12, fontFamily: "var(--font-mono)" }}>
+            Only these domains will be scanned. If empty, any domain is allowed.
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <input
+              value={newDomain}
+              onChange={e => setNewDomain(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && addDomain()}
+              placeholder="example.com"
+              style={{
+                flex: 1, background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border)',
+                borderRadius: 6, padding: '10px 14px', color: 'var(--foreground)',
+                fontSize: '0.78rem', fontFamily: "var(--font-mono)", outline: 'none',
+              }}
+            />
+            <button onClick={addDomain} style={{
+              background: 'var(--accent)', color: 'var(--background)', border: 'none',
+              borderRadius: 6, padding: '10px 20px', fontFamily: "var(--font-mono)",
+              fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer',
+            }}>
+              ADD
+            </button>
+          </div>
+          {allowedDomains.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {allowedDomains.map(d => (
+                <div key={d.id} style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  padding: "8px 12px", background: "rgba(0,0,0,0.2)", borderRadius: 6,
+                  border: "1px solid var(--border)",
+                }}>
+                  <span style={{ fontSize: "0.75rem", color: "var(--foreground)", fontFamily: "var(--font-mono)" }}>{d.domain}</span>
+                  <button onClick={() => removeDomain(d.id)} style={{
+                    background: "none", border: "none", color: "#f87171", cursor: "pointer",
+                    fontSize: "0.65rem", fontFamily: "var(--font-mono)",
+                  }}>
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Save Button */}
