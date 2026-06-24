@@ -1,0 +1,8 @@
+{
+  "name": "juice-shop",
+  "image": "bkimminich/juice-shop",
+  "randomize": {
+    "envVars": ["NODE_ENV"],
+    "exposedPortRange": [3000, 3999]
+  }
+}

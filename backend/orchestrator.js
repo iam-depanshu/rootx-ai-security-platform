@@ -5,6 +5,7 @@ const { lookupCVEs } = require("./modules/cve-lookup");
 const { scanForSecrets } = require("./modules/secrets-scanner");
 const { recordMitreCoverage } = require("./modules/mitre-map");
 const { crawl } = require("./modules/crawler");
+const { loadPlugins } = require("./engines/plugin-loader");
 const fetch = require("node-fetch");
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
@@ -253,6 +254,26 @@ async function runScan(targetUrl, parsed, io, supabase) {
       if (result.sslResult) context.sslResult = result.sslResult;
     } catch (err) {
       console.error(`[ROOTX] Site module ${mod.name} error:`, err.message);
+    }
+  }
+
+  /* ── 3.55 Plugins ── */
+  const plugins = loadPlugins();
+  for (const plugin of plugins) {
+    try {
+      const pluginResult = await plugin.run(targetUrl);
+      if (pluginResult?.vulnerabilities?.length) {
+        const tagged = pluginResult.vulnerabilities.map(v => ({ ...v, foundOn: targetUrl }));
+        allVulns.push(...tagged);
+      }
+      moduleProgress++;
+      io.emit("scan:progress", {
+        scanId,
+        progress: Math.round((moduleProgress / totalTasks) * 100),
+        score: runningScore,
+      });
+    } catch (err) {
+      console.error(`[ROOTX] Plugin ${plugin.name} error:`, err.message);
     }
   }
 

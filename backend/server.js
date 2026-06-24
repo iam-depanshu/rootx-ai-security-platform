@@ -10,6 +10,7 @@ const { processMessage } = require("./engines/agent");
 const { firewall, registerShieldRoutes } = require("./middleware/firewall");
 const { isValidTarget, sanitizeChatMessage } = require("./utils/sanitize");
 const { generateReportPDF } = require("./modules/report-generator");
+const { attachTerminalServer } = require("./engines/terminal-bridge");
 
 const app = express();
 const server = http.createServer(app);
@@ -283,6 +284,56 @@ app.get("/health", (req, res) => res.json({ status: "OK", service: "RootX", port
 io.on("connection", (socket) => {
   console.log(`[ROOTX] Client connected: ${socket.id}`);
   socket.on("disconnect", () => console.log(`[ROOTX] Client disconnected: ${socket.id}`));
+});
+
+/* ─── TERMINAL BRIDGE (WebSocket) ─── */
+attachTerminalServer(server);
+
+/* ─── LAB GENERATOR ─── */
+const { spinUpLab, destroyLab } = require("./engines/lab-generator");
+
+app.post("/api/lab/start", async (req, res) => {
+  try {
+    const { templateName, sessionId } = req.body;
+    if (!templateName || !sessionId) return res.status(400).json({ error: "templateName and sessionId required" });
+    const lab = await spinUpLab(templateName, sessionId);
+    res.json(lab);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/lab/stop", async (req, res) => {
+  try {
+    const { containerId } = req.body;
+    await destroyLab(containerId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ─── RECON INGEST (browser extension) ─── */
+app.post("/api/recon-ingest", async (req, res) => {
+  const { url, forms } = req.body;
+  console.log(`[RECON] Forms found on ${url}:`, forms?.length || 0);
+  res.json({ received: true });
+});
+
+/* ─── SCENARIO SHARING ─── */
+app.post("/api/scenarios/share", async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: "Database not connected" });
+  const { userId, name, templateJson } = req.body;
+  const { data, error } = await supabase
+    .from("shared_scenarios")
+    .insert({ user_id: userId, name, template_json: templateJson });
+  res.json({ data, error });
+});
+
+app.get("/api/scenarios", async (req, res) => {
+  if (!supabase) return res.json([]);
+  const { data } = await supabase.from("shared_scenarios").select("*").eq("approved", true);
+  res.json(data || []);
 });
 
 /* ─── START ─── */
