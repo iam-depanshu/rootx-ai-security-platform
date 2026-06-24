@@ -1,0 +1,13 @@
+{
+  "files": {
+    "attack_payloads.jsonl": 45,
+    "code_vulns.jsonl": 45,
+    "incident_response.jsonl": 22,
+    "owasp_knowledge.jsonl": 10,
+    "security_qa.jsonl": 55
+  },
+  "total": 177,
+  "train": 160,
+  "validation": 17,
+  "timestamp": "2026-06-14T04:50:58.784Z"
+}
